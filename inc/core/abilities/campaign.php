@@ -150,11 +150,11 @@ function extrachill_newsletter_ability_push_campaign( $input ) {
  * provided by data-machine-business. This plugin
  * owns the policy (building the email content, sender identity/brand, tracking
  * the campaign ID in post meta); the raw API transport lives one layer down.
- * The Data Machine suite is a hard runtime dependency, so there is no in-plugin
+ * Missing provider capability is reported explicitly without an in-plugin
  * fallback client.
  *
  * @param array $campaign Campaign content + sender identity (see push_campaign).
- * @return array|WP_Error Result {success, campaign_id, created, message, raw}.
+ * @return array|WP_Error Result {success, campaign_id, created, message}.
  */
 function extrachill_newsletter_sendy_push_campaign( $campaign ) {
 	return extrachill_newsletter_execute_sendy_campaign_ability( 'datamachine/sendy-push-campaign', $campaign );

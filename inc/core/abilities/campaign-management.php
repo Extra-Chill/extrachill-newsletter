@@ -158,9 +158,8 @@ function extrachill_newsletter_execute_sendy_campaign_ability( $name, $input ) {
 /**
  * List Sendy campaigns.
  *
- * Delegates the campaigns-table query to the single canonical DMB Sendy client.
- * The Data Machine suite is a hard runtime dependency, so there is no in-plugin
- * DB fallback.
+ * Delegates through the public DMB campaign ability. When that capability is
+ * absent, campaign management returns a stable provider-unavailable error.
  *
  * @param array $input {per_page, offset, status}.
  * @return array|WP_Error Campaign list with totals.
