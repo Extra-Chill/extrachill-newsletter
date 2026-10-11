@@ -30,4 +30,4 @@ jobs:
       dry_run: ${{ inputs.dry_run || false }}
     secrets:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      EXTERNAL_PACKAGE_SOURCE_POLICY: ${{ secrets.EXTERNAL_PACKAGE_SOURCE_POLICY }}
+      EXTERNAL_PACKAGE_SOURCE_POLICY: ${{ secrets.DOCS_AGENT_EXTERNAL_PACKAGE_SOURCE_POLICY }}
