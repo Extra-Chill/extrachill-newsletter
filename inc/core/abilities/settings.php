@@ -58,11 +58,11 @@ function extrachill_newsletter_register_settings_abilities() {
 				'properties' => array(
 					'sendy_api_key' => array(
 						'type'        => 'string',
-						'description' => __( 'Sendy API key.', 'extrachill-newsletter' ),
+						'description' => __( 'Sendy API key. Stored in the Data Machine Business Sendy config; blank keeps the current key.', 'extrachill-newsletter' ),
 					),
 					'sendy_url'     => array(
 						'type'        => 'string',
-						'description' => __( 'Sendy installation URL.', 'extrachill-newsletter' ),
+						'description' => __( 'Sendy installation URL. Stored in the Data Machine Business Sendy config.', 'extrachill-newsletter' ),
 					),
 					'from_name'     => array(
 						'type'        => 'string',
@@ -162,15 +162,24 @@ function extrachill_newsletter_ability_get_settings( $input ) {
 		}
 	}
 
+	// The Sendy connection lives in Data Machine Business. The API key is
+	// never returned; sendy_api_key stays in the shape (empty) so clients that
+	// round-trip settings keep working, and a blank key never overwrites.
+	$connection = extrachill_newsletter_get_sendy_connection();
+	if ( ! $connection['api_key_set'] || '' === $connection['sendy_url'] ) {
+		$warnings[] = __( 'The Sendy API connection (key and URL) is not configured. Campaign push and subscriptions will fail.', 'extrachill-newsletter' );
+	}
+
 	// Return settings with integration list IDs, computed integrations, and warnings.
 	// Strip per-integration keys from the flat settings (they're now in computed).
 	$core_settings = array(
-		'sendy_api_key' => $settings['sendy_api_key'],
-		'sendy_url'     => $settings['sendy_url'],
-		'from_name'     => $settings['from_name'],
-		'from_email'    => $settings['from_email'],
-		'reply_to'      => $settings['reply_to'],
-		'brand_id'      => $settings['brand_id'],
+		'sendy_api_key'     => '',
+		'sendy_api_key_set' => $connection['api_key_set'],
+		'sendy_url'         => $connection['sendy_url'],
+		'from_name'         => $settings['from_name'],
+		'from_email'        => $settings['from_email'],
+		'reply_to'          => $settings['reply_to'],
+		'brand_id'          => $settings['brand_id'],
 	);
 
 	return array(
@@ -187,23 +196,29 @@ function extrachill_newsletter_ability_get_settings( $input ) {
  * Handles list IDs via the list_ids map (context → list_id).
  *
  * @param array $input Partial settings object.
- * @return array Updated settings (same shape as GET).
+ * @return array|WP_Error Updated settings (same shape as GET).
  */
 function extrachill_newsletter_ability_update_settings( $input ) {
 	$existing = get_site_option( 'extrachill_newsletter_settings', array() );
 
-	// Core settings.
-	$core_keys = array( 'sendy_api_key', 'sendy_url', 'from_name', 'from_email', 'reply_to', 'brand_id' );
+	$existing = is_array( $existing ) ? $existing : array();
 
-	foreach ( $core_keys as $key ) {
+	// Sendy connection: written to Data Machine Business, never stored here.
+	$api_key   = isset( $input['sendy_api_key'] ) ? sanitize_text_field( $input['sendy_api_key'] ) : '';
+	$sendy_url = isset( $input['sendy_url'] ) ? esc_url_raw( $input['sendy_url'] ) : '';
+	if ( '' !== $api_key || '' !== $sendy_url ) {
+		$saved = extrachill_newsletter_save_sendy_connection( $api_key, $sendy_url );
+		if ( is_wp_error( $saved ) ) {
+			return $saved;
+		}
+	}
+
+	// Sender identity.
+	foreach ( array( 'from_name', 'from_email', 'reply_to', 'brand_id' ) as $key ) {
 		if ( isset( $input[ $key ] ) ) {
-			if ( in_array( $key, array( 'from_email', 'reply_to' ), true ) ) {
-				$existing[ $key ] = sanitize_email( $input[ $key ] );
-			} elseif ( 'sendy_url' === $key ) {
-				$existing[ $key ] = esc_url_raw( $input[ $key ] );
-			} else {
-				$existing[ $key ] = sanitize_text_field( $input[ $key ] );
-			}
+			$existing[ $key ] = in_array( $key, array( 'from_email', 'reply_to' ), true )
+				? sanitize_email( $input[ $key ] )
+				: sanitize_text_field( $input[ $key ] );
 		}
 	}
 
