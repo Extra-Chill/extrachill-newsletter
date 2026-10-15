@@ -51,19 +51,11 @@ function extrachill_newsletter_register_settings_abilities() {
 		'extrachill/update-newsletter-settings',
 		array(
 			'label'               => __( 'Update Newsletter Settings', 'extrachill-newsletter' ),
-			'description'         => __( 'Update newsletter settings including Sendy API configuration and integration list IDs.', 'extrachill-newsletter' ),
+			'description'         => __( 'Update newsletter sender identity and integration list IDs. Sendy credentials are managed by Data Machine Business.', 'extrachill-newsletter' ),
 			'category'            => 'extrachill-newsletter',
 			'input_schema'        => array(
 				'type'       => 'object',
 				'properties' => array(
-					'sendy_api_key' => array(
-						'type'        => 'string',
-						'description' => __( 'Sendy API key. Stored in the Data Machine Business Sendy config; blank keeps the current key.', 'extrachill-newsletter' ),
-					),
-					'sendy_url'     => array(
-						'type'        => 'string',
-						'description' => __( 'Sendy installation URL. Stored in the Data Machine Business Sendy config.', 'extrachill-newsletter' ),
-					),
 					'from_name'     => array(
 						'type'        => 'string',
 						'description' => __( 'From name for campaigns.', 'extrachill-newsletter' ),
@@ -162,28 +154,24 @@ function extrachill_newsletter_ability_get_settings( $input ) {
 		}
 	}
 
-	// The Sendy connection lives in Data Machine Business. The API key is
-	// never returned; sendy_api_key stays in the shape (empty) so clients that
-	// round-trip settings keep working, and a blank key never overwrites.
+	// Sendy credentials are owned by Data Machine Business; report status only.
 	$connection = extrachill_newsletter_get_sendy_connection();
-	if ( ! $connection['api_key_set'] || '' === $connection['sendy_url'] ) {
-		$warnings[] = __( 'The Sendy API connection (key and URL) is not configured. Campaign push and subscriptions will fail.', 'extrachill-newsletter' );
+	if ( ! $connection['configured'] ) {
+		$warnings[] = __( 'The Sendy API connection is not configured in Data Machine Business (datamachine_sendy_config). Campaign push and subscriptions will fail.', 'extrachill-newsletter' );
 	}
 
 	// Return settings with integration list IDs, computed integrations, and warnings.
 	// Strip per-integration keys from the flat settings (they're now in computed).
 	$core_settings = array(
-		'sendy_api_key'     => '',
-		'sendy_api_key_set' => $connection['api_key_set'],
-		'sendy_url'         => $connection['sendy_url'],
-		'from_name'         => $settings['from_name'],
-		'from_email'        => $settings['from_email'],
-		'reply_to'          => $settings['reply_to'],
-		'brand_id'          => $settings['brand_id'],
+		'from_name'  => $settings['from_name'],
+		'from_email' => $settings['from_email'],
+		'reply_to'   => $settings['reply_to'],
+		'brand_id'   => $settings['brand_id'],
 	);
 
 	return array(
 		'settings'     => $core_settings,
+		'sendy'        => $connection,
 		'integrations' => $computed,
 		'warnings'     => $warnings,
 	);
@@ -203,14 +191,12 @@ function extrachill_newsletter_ability_update_settings( $input ) {
 
 	$existing = is_array( $existing ) ? $existing : array();
 
-	// Sendy connection: written to Data Machine Business, never stored here.
-	$api_key   = isset( $input['sendy_api_key'] ) ? sanitize_text_field( $input['sendy_api_key'] ) : '';
-	$sendy_url = isset( $input['sendy_url'] ) ? esc_url_raw( $input['sendy_url'] ) : '';
-	if ( '' !== $api_key || '' !== $sendy_url ) {
-		$saved = extrachill_newsletter_save_sendy_connection( $api_key, $sendy_url );
-		if ( is_wp_error( $saved ) ) {
-			return $saved;
-		}
+	if ( isset( $input['sendy_api_key'] ) || isset( $input['sendy_url'] ) ) {
+		return new WP_Error(
+			'sendy_connection_not_owned',
+			__( 'Sendy credentials are managed by Data Machine Business in the datamachine_sendy_config network option, not in newsletter settings.', 'extrachill-newsletter' ),
+			array( 'status' => 400 )
+		);
 	}
 
 	// Sender identity.

@@ -324,7 +324,7 @@ function extrachill_newsletter_sendy_subscribe( $list_id, $email, $name = '' ) {
 	}
 
 	return $ability->execute(
-		extrachill_newsletter_sendy_provider_args() + array(
+		array(
 			'list_id' => $list_id,
 			'email'   => $email,
 			'name'    => $name,

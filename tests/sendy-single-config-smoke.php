@@ -4,8 +4,8 @@
  *
  * - Push to Sendy returns the provider's real error (with a REST status)
  *   instead of a generic success:false.
- * - Sendy credentials live only in Data Machine Business: settings read and
- *   write through it, the key is never returned, and legacy copies migrate.
+ * - Sendy credentials live only in Data Machine Business: newsletter settings
+ *   report status, refuse credential writes, and delete the legacy copy.
  * - Subscribe/metrics calls no longer pass a config payload.
  *
  * Run with: php tests/sendy-single-config-smoke.php
@@ -14,23 +14,9 @@
 namespace DataMachineBusiness\Abilities\Sendy {
 	class SendyAbilities {
 		public static $config = array();
-		public static $reject = false;
 
 		public static function get_campaign_config(): array {
 			return self::$config;
-		}
-
-		public static function has_api_config(): bool {
-			return ! empty( self::$config['api_key'] ) && ! empty( self::$config['sendy_url'] );
-		}
-
-		public static function update_api_config( string $api_key, string $sendy_url ) {
-			if ( self::$reject || '' === $api_key || '' === $sendy_url ) {
-				return new \WP_Error( 'sendy_config_invalid', 'The Sendy URL is invalid.' );
-			}
-			self::$config['api_key']   = $api_key;
-			self::$config['sendy_url'] = rtrim( $sendy_url, '/' );
-			return true;
 		}
 	}
 }
@@ -246,48 +232,36 @@ namespace {
 	$assert( 'Extra Chill' === $identity['from_name'] && '1' === $identity['brand_id'], 'identity keeps stored values and defaults' );
 	$assert( ! function_exists( 'extrachill_newsletter_sendy_dmb_config' ), 'the duplicate config builder is gone' );
 
-	// ── Migration: legacy copy seeds DMB once, then is removed ──
+	// ── Legacy duplicate is deleted, never copied ──
 	SendyAbilities::$config = array( 'db' => array( 'host' => 'localhost' ) );
-	SendyAbilities::$reject = true;
-	extrachill_newsletter_migrate_sendy_credentials();
-	$assert( isset( $GLOBALS['sc_options']['extrachill_newsletter_settings']['sendy_api_key'] ), 'legacy key is kept when DMB rejects it' );
-
-	SendyAbilities::$reject = false;
-	extrachill_newsletter_migrate_sendy_credentials();
-	$assert( 'legacy-secret' === SendyAbilities::$config['api_key'] && 'https://mail.example.test' === SendyAbilities::$config['sendy_url'], 'legacy credentials seed an empty DMB config' );
-	$assert( isset( SendyAbilities::$config['db'] ), 'migration keeps DMB db config' );
-	$assert( ! isset( $GLOBALS['sc_options']['extrachill_newsletter_settings']['sendy_api_key'] ) && ! isset( $GLOBALS['sc_options']['extrachill_newsletter_settings']['sendy_url'] ), 'legacy copy is removed after migrating' );
-	$assert( 'Extra Chill' === $GLOBALS['sc_options']['extrachill_newsletter_settings']['from_name'], 'migration keeps other settings' );
+	extrachill_newsletter_remove_legacy_sendy_credentials();
+	$assert( isset( $GLOBALS['sc_options']['extrachill_newsletter_settings']['sendy_api_key'] ), 'legacy copy is kept while DMB is unconfigured' );
+	$assert( ! isset( SendyAbilities::$config['api_key'] ), 'the newsletter never writes DMB credentials' );
 
 	SendyAbilities::$config = array( 'api_key' => 'dmb-secret', 'sendy_url' => 'https://dmb.example.test' );
-	$GLOBALS['sc_options']['extrachill_newsletter_settings']['sendy_api_key'] = 'stale-secret';
-	extrachill_newsletter_migrate_sendy_credentials();
-	$assert( 'dmb-secret' === SendyAbilities::$config['api_key'], 'a stale legacy key never overwrites DMB' );
-	$assert( ! isset( $GLOBALS['sc_options']['extrachill_newsletter_settings']['sendy_api_key'] ), 'a stale legacy key is still cleaned up' );
+	extrachill_newsletter_remove_legacy_sendy_credentials();
+	$assert( ! isset( $GLOBALS['sc_options']['extrachill_newsletter_settings']['sendy_api_key'] ) && ! isset( $GLOBALS['sc_options']['extrachill_newsletter_settings']['sendy_url'] ), 'legacy copy is deleted once DMB is configured' );
+	$assert( 'dmb-secret' === SendyAbilities::$config['api_key'], 'DMB credentials are untouched' );
+	$assert( 'Extra Chill' === $GLOBALS['sc_options']['extrachill_newsletter_settings']['from_name'], 'cleanup keeps other settings' );
 
-	// ── Settings read/write through DMB ──
+	// ── Settings: status only, no credential fields ──
 	$settings = extrachill_newsletter_ability_get_settings( array() );
-	$assert( '' === $settings['settings']['sendy_api_key'] && true === $settings['settings']['sendy_api_key_set'], 'settings never return the API key' );
-	$assert( 'https://dmb.example.test' === $settings['settings']['sendy_url'], 'settings show the DMB URL' );
+	$assert( ! isset( $settings['settings']['sendy_api_key'] ) && ! isset( $settings['settings']['sendy_url'] ), 'settings carry no credential fields' );
+	$assert( array( 'configured' => true, 'sendy_url' => 'https://dmb.example.test' ) === $settings['sendy'], 'settings report DMB connection status' );
 	$assert( false === strpos( serialize( $settings ), 'dmb-secret' ), 'the key appears nowhere in settings output' );
 
-	extrachill_newsletter_ability_update_settings( array( 'sendy_api_key' => '', 'sendy_url' => 'https://new.example.test/', 'from_name' => 'EC' ) );
-	$assert( 'dmb-secret' === SendyAbilities::$config['api_key'] && 'https://new.example.test' === SendyAbilities::$config['sendy_url'], 'blank key keeps the saved key while the URL updates' );
+	$refused = extrachill_newsletter_ability_update_settings( array( 'sendy_api_key' => 'x', 'from_name' => 'EC' ) );
+	$assert( is_wp_error( $refused ) && 'sendy_connection_not_owned' === $refused->get_error_code(), 'credential writes are refused and point at DMB' );
+	$assert( 'dmb-secret' === SendyAbilities::$config['api_key'], 'a refused write changes nothing in DMB' );
+
+	extrachill_newsletter_ability_update_settings( array( 'from_name' => 'EC' ) );
 	$assert( 'EC' === get_site_option( 'extrachill_newsletter_settings' )['from_name'], 'sender identity still saves' );
-	$assert( ! isset( get_site_option( 'extrachill_newsletter_settings' )['sendy_api_key'] ), 'the key is never stored in newsletter settings' );
-
-	extrachill_newsletter_ability_update_settings( array( 'sendy_api_key' => 'rotated-secret' ) );
-	$assert( 'rotated-secret' === SendyAbilities::$config['api_key'] && 'https://new.example.test' === SendyAbilities::$config['sendy_url'], 'a new key rotates without touching the URL' );
-
-	SendyAbilities::$reject = true;
-	$bad = extrachill_newsletter_ability_update_settings( array( 'sendy_url' => 'nope' ) );
-	$assert( is_wp_error( $bad ), 'a rejected connection update is reported' );
-	SendyAbilities::$reject = false;
+	$assert( ! isset( get_site_option( 'extrachill_newsletter_settings' )['sendy_api_key'] ), 'no key is ever stored in newsletter settings' );
 
 	SendyAbilities::$config = array();
 	$warned                 = extrachill_newsletter_ability_get_settings( array() );
-	$assert( false === $warned['settings']['sendy_api_key_set'], 'missing key is reported' );
-	$assert( (bool) array_filter( $warned['warnings'], static fn( $w ) => false !== strpos( $w, 'Sendy API connection' ) ), 'missing connection is a settings warning' );
+	$assert( false === $warned['sendy']['configured'], 'missing connection is reported' );
+	$assert( (bool) array_filter( $warned['warnings'], static fn( $w ) => false !== strpos( $w, 'datamachine_sendy_config' ) ), 'the warning names the DMB option' );
 
 	// ── Metrics no longer pass a config payload ──
 	$metrics = new SingleConfigAbility( array( 'total_active' => 1, 'lists' => array() ) );
@@ -297,8 +271,7 @@ namespace {
 
 	$subscribe_src = file_get_contents( dirname( __DIR__ ) . '/inc/core/abilities/subscribe.php' );
 	$analytics_src = file_get_contents( dirname( __DIR__ ) . '/inc/core/abilities/analytics.php' );
-	$assert( false === strpos( $subscribe_src, "'config'" ) && false === strpos( $analytics_src, "'config'" ), 'subscribe and analytics build no config payload themselves' );
-	$assert( array() === extrachill_newsletter_sendy_provider_args(), 'a canonical-config DMB gets no legacy args' );
+	$assert( false === strpos( $subscribe_src, "'config'" ) && false === strpos( $analytics_src, "'config'" ), 'subscribe and analytics pass no config payload' );
 
 	if ( ! empty( $failures ) ) {
 		fwrite( STDERR, implode( PHP_EOL, $failures ) . PHP_EOL );

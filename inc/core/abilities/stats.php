@@ -134,7 +134,7 @@ function extrachill_newsletter_ability_subscriber_stats( $input = array() ) {
 	}
 
 	$result = $dmb->execute(
-		extrachill_newsletter_sendy_provider_args() + array(
+		array(
 			'metric' => 'subscribers',
 			'source' => $source_pref,
 		)

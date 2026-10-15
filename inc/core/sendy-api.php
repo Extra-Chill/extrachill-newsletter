@@ -17,10 +17,6 @@ defined( 'ABSPATH' ) || exit;
  * Single source of truth — every place that needs the default Sendy URL
  * must read it from here rather than re-hardcoding the literal.
  */
-if ( ! defined( 'EXTRACHILL_NEWSLETTER_SENDY_URL_DEFAULT' ) ) {
-	define( 'EXTRACHILL_NEWSLETTER_SENDY_URL_DEFAULT', 'https://mail.extrachill.com/sendy' );
-}
-
 /**
  * Default newsletter settings.
  *
@@ -66,127 +62,41 @@ function get_sendy_config() {
 const EXTRACHILL_NEWSLETTER_DMB_SENDY_CLASS = 'DataMachineBusiness\\Abilities\\Sendy\\SendyAbilities';
 
 /**
- * Describe the Sendy API connection without exposing the key.
+ * Report whether Data Machine Business has a usable Sendy API connection.
  *
- * @return array {available: bool, api_key_set: bool, sendy_url: string}.
+ * Read-only status for settings screens. Credentials are owned and managed by
+ * Data Machine Business (`datamachine_sendy_config`); this plugin never stores
+ * or edits them.
+ *
+ * @return array {configured: bool, sendy_url: string}.
  */
 function extrachill_newsletter_get_sendy_connection() {
-	$class = EXTRACHILL_NEWSLETTER_DMB_SENDY_CLASS;
-	if ( ! class_exists( $class ) || ! method_exists( $class, 'get_campaign_config' ) ) {
-		return array(
-			'available'   => false,
-			'api_key_set' => false,
-			'sendy_url'   => '',
-		);
-	}
-
-	$config = $class::get_campaign_config();
+	$class  = EXTRACHILL_NEWSLETTER_DMB_SENDY_CLASS;
+	$config = class_exists( $class ) && method_exists( $class, 'get_campaign_config' ) ? $class::get_campaign_config() : array();
 
 	return array(
-		'available'   => method_exists( $class, 'update_api_config' ),
-		'api_key_set' => ! empty( $config['api_key'] ),
-		'sendy_url'   => isset( $config['sendy_url'] ) ? (string) $config['sendy_url'] : '',
+		'configured' => ! empty( $config['api_key'] ) && ! empty( $config['sendy_url'] ),
+		'sendy_url'  => isset( $config['sendy_url'] ) ? (string) $config['sendy_url'] : '',
 	);
 }
 
-/**
- * Save the Sendy API connection to Data Machine Business.
- *
- * A blank API key keeps the stored key, so settings forms can leave the
- * password field empty.
- *
- * @param string $api_key   New API key, or '' to keep the current one.
- * @param string $sendy_url Sendy installation URL, or '' to keep the current one.
- * @return true|WP_Error
- */
-function extrachill_newsletter_save_sendy_connection( $api_key, $sendy_url ) {
-	$class = EXTRACHILL_NEWSLETTER_DMB_SENDY_CLASS;
-	if ( ! class_exists( $class ) || ! method_exists( $class, 'update_api_config' ) ) {
-		return new WP_Error(
-			'sendy_provider_unavailable',
-			__( 'Saving the Sendy connection requires the Data Machine Business Sendy integration.', 'extrachill-newsletter' )
-		);
-	}
-
-	$api_key   = trim( (string) $api_key );
-	$sendy_url = trim( (string) $sendy_url );
-
-	if ( '' === $api_key && '' === $sendy_url ) {
-		return true;
-	}
-
-	$current = $class::get_campaign_config();
-	if ( '' === $api_key ) {
-		$api_key = isset( $current['api_key'] ) ? (string) $current['api_key'] : '';
-	}
-	if ( '' === $sendy_url ) {
-		$sendy_url = isset( $current['sendy_url'] ) ? (string) $current['sendy_url'] : '';
-	}
-
-	return $class::update_api_config( $api_key, $sendy_url );
-}
+add_action( 'init', 'extrachill_newsletter_remove_legacy_sendy_credentials' );
 
 /**
- * Transitional provider args for subscribe/metrics calls.
- *
- * Data Machine Business resolves its own canonical Sendy config once it
- * provides has_api_config(). Until that version is deployed, keep passing the
- * legacy key so signups never break during a staggered rollout. Remove once
- * every site runs a DMB with canonical subscribe/metrics config.
- *
- * @return array Empty, or {config: {api_key, sendy_url}} for an older DMB.
- */
-function extrachill_newsletter_sendy_provider_args() {
-	$class = EXTRACHILL_NEWSLETTER_DMB_SENDY_CLASS;
-	if ( class_exists( $class ) && method_exists( $class, 'has_api_config' ) ) {
-		return array();
-	}
-
-	$settings = get_site_option( 'extrachill_newsletter_settings', array() );
-	if ( ! is_array( $settings ) || empty( $settings['sendy_api_key'] ) || empty( $settings['sendy_url'] ) ) {
-		return array();
-	}
-
-	return array(
-		'config' => array(
-			'api_key'   => (string) $settings['sendy_api_key'],
-			'sendy_url' => (string) $settings['sendy_url'],
-		),
-	);
-}
-
-add_action( 'init', 'extrachill_newsletter_migrate_sendy_credentials' );
-
-/**
- * One-time move of legacy Sendy credentials into Data Machine Business.
+ * Remove the legacy duplicate of the Sendy credentials.
  *
  * Older versions stored sendy_api_key and sendy_url in this plugin's
- * settings. Seed DMB's canonical config when it has no API connection yet,
- * then drop the legacy copy so the key lives in exactly one place. The legacy
- * copy is kept if DMB is unavailable or rejects it.
+ * settings. Once Data Machine Business has a working connection, the copy is
+ * dead weight and a second place for the key to drift, so delete it. It is
+ * left alone while DMB is unconfigured so nothing is lost.
  */
-function extrachill_newsletter_migrate_sendy_credentials() {
+function extrachill_newsletter_remove_legacy_sendy_credentials() {
 	$settings = get_site_option( 'extrachill_newsletter_settings', array() );
 	if ( ! is_array( $settings ) || ( ! array_key_exists( 'sendy_api_key', $settings ) && ! array_key_exists( 'sendy_url', $settings ) ) ) {
 		return;
 	}
 
-	$class = EXTRACHILL_NEWSLETTER_DMB_SENDY_CLASS;
-	if ( ! class_exists( $class ) || ! method_exists( $class, 'update_api_config' ) ) {
-		return;
-	}
-
-	$legacy_key = isset( $settings['sendy_api_key'] ) ? (string) $settings['sendy_api_key'] : '';
-	$legacy_url = isset( $settings['sendy_url'] ) ? (string) $settings['sendy_url'] : '';
-
-	if ( ! $class::has_api_config() && '' !== $legacy_key && '' !== $legacy_url ) {
-		$saved = $class::update_api_config( $legacy_key, $legacy_url );
-		if ( is_wp_error( $saved ) ) {
-			return;
-		}
-	}
-
-	if ( ! $class::has_api_config() ) {
+	if ( ! extrachill_newsletter_get_sendy_connection()['configured'] ) {
 		return;
 	}
 
