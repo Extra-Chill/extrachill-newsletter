@@ -142,6 +142,12 @@ function prepare_newsletter_email_content( $post ) {
 
 	$html_template = generate_email_html_template( $subject, $content, $unsubscribe_link, $read_on_web_url, $navbar_links );
 
+	// Email clicks carry no referrer; campaign parameters are their only
+	// provenance in site analytics. Network links only (see link-tagging.php).
+	if ( function_exists( 'extrachill_newsletter_tag_email_links' ) ) {
+		$html_template = extrachill_newsletter_tag_email_links( $html_template, extrachill_newsletter_campaign_utm_params( $post ) );
+	}
+
 	return array(
 		'subject'       => $subject,
 		'html_template' => $html_template,
